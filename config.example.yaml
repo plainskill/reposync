@@ -24,9 +24,8 @@ forgejo:
   webhook_secret: ${FJ_HOOK_SECRET}
 
 owners:
+  # User namespaces only (username/*). Organizations are not synced.
   - github: plainskill
     forgejo: plainskill
-  - github: LibreLoom
-    forgejo: LibreLoom
 
 exclude: []

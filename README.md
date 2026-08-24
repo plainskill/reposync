@@ -4,6 +4,8 @@ Bidirectional sync of **repository catalog** and **git objects** between [Forgej
 
 It creates missing repos, copies metadata (description, homepage/website, topics, visibility, default branch, archived), and fetches/pushes git refs. A repo that disappears on one side is **archived** on the other, never deleted. Issues, pull requests, and similar forge features are out of scope.
 
+Only **user** namespaces are synced (`username/repo` on each side). Organization repos are ignored; do not list orgs under `owners`.
+
 ## Behavior
 
 | Situation | Action |
@@ -16,6 +18,7 @@ It creates missing repos, copies metadata (description, homepage/website, topics
 | Content conflict | Leave the original branch. Commit the conflicted tree (merge markers kept) on `reposync/conflict/<branch>` and push that ref to both |
 | Deleted git ref | Ignored (no mirror prune) |
 | Forks / Forgejo pull-mirrors | Skipped unless `include_forks: true` |
+| Organization repos | Never listed, created, or updated |
 
 Pushes to both forges at once are coalesced into **one** per-repo reconcile: fetch both remotes, then decide. Webhooks only wake that path; a 5-minute timer is the same path.
 

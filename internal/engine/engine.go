@@ -117,6 +117,9 @@ func (e *Engine) apply(ctx context.Context, key string) error {
 			return err
 		}
 		for _, p := range pairs {
+			if !e.Cfg.KnownGitHubOwner(p.GitHubOwner) || !e.Cfg.KnownForgejoOwner(p.ForgejoOwner) {
+				continue
+			}
 			if err := e.Git.SyncPair(ctx, p); err != nil {
 				e.Log.Error("git", "repo", p.GitHubOwner+"/"+p.GitHubName, "err", err)
 			}
@@ -124,6 +127,10 @@ func (e *Engine) apply(ctx context.Context, key string) error {
 		return nil
 	}
 	ghOwner, ghName, fjOwner, fjName := e.splitKey(key)
+	if ghOwner == "" {
+		e.Log.Info("skip unknown owner", "key", key)
+		return nil
+	}
 	if err := e.Cat.ReconcileOne(ctx, ghOwner, ghName, fjOwner, fjName); err != nil {
 		return err
 	}
@@ -145,7 +152,7 @@ func (e *Engine) splitKey(key string) (ghOwner, ghName, fjOwner, fjName string) 
 	if gh, ok := e.Cfg.GitHubOwner(owner); ok {
 		return gh, name, owner, name
 	}
-	return owner, name, owner, name
+	return "", "", "", ""
 }
 
 func (e *Engine) pairFor(ghOwner, ghName, fjOwner, fjName string) (*store.Pair, error) {

@@ -11,6 +11,7 @@ type Listed struct {
 	Owner   string
 	Name    string
 	Fork    bool
+	Org     bool
 	Mirror  bool
 	Empty   bool
 	Missing bool

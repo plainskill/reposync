@@ -43,6 +43,7 @@ type repoJSON struct {
 	UpdatedAt     time.Time  `json:"updated_at"`
 	Owner         struct {
 		Login string `json:"login"`
+		Type  string `json:"type"`
 	} `json:"owner"`
 }
 
@@ -52,6 +53,7 @@ func (r repoJSON) listed() model.Listed {
 		Owner:  r.Owner.Login,
 		Name:   r.Name,
 		Fork:   r.Fork,
+		Org:    strings.EqualFold(r.Owner.Type, "Organization"),
 		Mirror: false,
 		Empty:  r.Size == 0 && r.PushedAt == nil,
 		Meta: model.Meta{
@@ -71,15 +73,11 @@ func (c *Client) List(ctx context.Context, owner string) ([]model.Listed, error)
 	if err != nil {
 		return nil, err
 	}
-	var path string
-	q := url.Values{"per_page": {"100"}}
 	if kind == "Organization" {
-		path = "/orgs/" + url.PathEscape(owner) + "/repos"
-		q.Set("type", "all")
-	} else {
-		path = "/users/" + url.PathEscape(owner) + "/repos"
-		q.Set("type", "owner")
+		return nil, fmt.Errorf("github owner %q is an organization; reposync only syncs username/* user repos", owner)
 	}
+	q := url.Values{"per_page": {"100"}, "type": {"owner"}}
+	path := "/users/" + url.PathEscape(owner) + "/repos"
 	var all []model.Listed
 	page := 1
 	for {
@@ -90,6 +88,9 @@ func (c *Client) List(ctx context.Context, owner string) ([]model.Listed, error)
 		}
 		for _, r := range raw {
 			item := r.listed()
+			if item.Org || !strings.EqualFold(item.Owner, owner) {
+				continue
+			}
 			if len(item.Meta.Topics) == 0 {
 				topics, err := c.Topics(ctx, r.Owner.Login, r.Name)
 				if err == nil {
@@ -136,12 +137,10 @@ func (c *Client) Create(ctx context.Context, owner string, name string, meta mod
 		"has_wiki":      false,
 		"has_downloads": false,
 	}
-	var path string
 	if kind == "Organization" {
-		path = "/orgs/" + url.PathEscape(owner) + "/repos"
-	} else {
-		path = "/user/repos"
+		return nil, fmt.Errorf("github owner %q is an organization; reposync only creates username/* user repos", owner)
 	}
+	path := "/user/repos"
 	var raw repoJSON
 	if err := c.do(ctx, http.MethodPost, path, body, &raw); err != nil {
 		return nil, err

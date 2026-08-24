@@ -41,6 +41,9 @@ func (r *Runner) ReconcileAll(ctx context.Context) error {
 			if r.skip(item, o.GitHub+"/"+item.Name) {
 				continue
 			}
+			if !strings.EqualFold(item.Owner, o.GitHub) {
+				continue
+			}
 			ghByKey[key(o.GitHub, item.Name)] = item
 		}
 		listed, err = r.Forgejo.List(ctx, o.Forgejo)
@@ -49,6 +52,9 @@ func (r *Runner) ReconcileAll(ctx context.Context) error {
 		}
 		for _, item := range listed {
 			if r.skip(item, o.GitHub+"/"+item.Name) {
+				continue
+			}
+			if !strings.EqualFold(item.Owner, o.Forgejo) {
 				continue
 			}
 			fjByKey[key(o.Forgejo, item.Name)] = item
@@ -108,7 +114,13 @@ func (r *Runner) ReconcileOne(ctx context.Context, ghOwner, ghName, fjOwner, fjN
 	if haveGH && r.skip(gh, gh.Owner+"/"+gh.Name) {
 		return nil
 	}
+	if haveGH && !r.Cfg.KnownGitHubOwner(gh.Owner) {
+		return nil
+	}
 	if haveFJ && r.skip(fj, mapName(ghOwner, fj.Name)) {
+		return nil
+	}
+	if haveFJ && !r.Cfg.KnownForgejoOwner(fj.Owner) {
 		return nil
 	}
 	if haveGH {
@@ -125,6 +137,9 @@ func (r *Runner) ReconcileOne(ctx context.Context, ghOwner, ghName, fjOwner, fjN
 }
 
 func (r *Runner) skip(item model.Listed, ghFull string) bool {
+	if item.Org {
+		return true
+	}
 	if r.Cfg.Excluded(ghFull) {
 		return true
 	}

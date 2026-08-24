@@ -191,6 +191,16 @@ func (c *Config) GitHubOwner(forgejoOwner string) (string, bool) {
 	return "", false
 }
 
+func (c *Config) KnownGitHubOwner(owner string) bool {
+	_, ok := c.ForgejoOwner(owner)
+	return ok
+}
+
+func (c *Config) KnownForgejoOwner(owner string) bool {
+	_, ok := c.GitHubOwner(owner)
+	return ok
+}
+
 func (c *Config) GitHubGitURL(owner, name string) string {
 	p := c.GitHub.Git
 	if strings.Contains(p, "://") {

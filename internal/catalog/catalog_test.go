@@ -143,14 +143,15 @@ func TestPeerGoneArchivesNotRecreate(t *testing.T) {
 	}
 }
 
-func TestSkipForks(t *testing.T) {
+func TestSkipOrgRepos(t *testing.T) {
 	gh, fj := newFake(), newFake()
-	gh.repos["alice/fork"] = model.Listed{ID: 1, Owner: "alice", Name: "fork", Fork: true, Meta: model.Meta{UpdatedAt: time.Now()}}
+	gh.repos["alice/orgish"] = model.Listed{ID: 9, Owner: "alice", Name: "orgish", Org: true, Meta: model.Meta{UpdatedAt: time.Now()}}
+	gh.repos["alice/demo"] = model.Listed{ID: 1, Owner: "alice", Name: "demo", Meta: model.Meta{Description: "hi", UpdatedAt: time.Now()}}
 	r := testRunner(t, gh, fj)
 	if err := r.ReconcileAll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(fj.created) != 0 {
-		t.Fatalf("created fork: %v", fj.created)
+	if len(fj.created) != 1 || fj.created[0] != "alice/demo" {
+		t.Fatalf("created: %v", fj.created)
 	}
 }

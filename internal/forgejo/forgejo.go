@@ -41,6 +41,7 @@ type repoJSON struct {
 	Owner         struct {
 		Login    string `json:"login"`
 		UserName string `json:"username"`
+		Type     string `json:"type"`
 	} `json:"owner"`
 }
 
@@ -54,6 +55,7 @@ func (r repoJSON) listed() model.Listed {
 		Owner:  owner,
 		Name:   r.Name,
 		Fork:   r.Fork,
+		Org:    strings.EqualFold(r.Owner.Type, "Organization"),
 		Mirror: r.Mirror,
 		Empty:  r.Empty,
 		Meta: model.Meta{
@@ -73,13 +75,11 @@ func (c *Client) List(ctx context.Context, owner string) ([]model.Listed, error)
 	if err != nil {
 		return nil, err
 	}
-	var path string
-	q := url.Values{"limit": {"50"}}
 	if kind == "Organization" {
-		path = "/api/v1/orgs/" + url.PathEscape(owner) + "/repos"
-	} else {
-		path = "/api/v1/users/" + url.PathEscape(owner) + "/repos"
+		return nil, fmt.Errorf("forgejo owner %q is an organization; reposync only syncs username/* user repos", owner)
 	}
+	path := "/api/v1/users/" + url.PathEscape(owner) + "/repos"
+	q := url.Values{"limit": {"50"}}
 	var all []model.Listed
 	page := 1
 	for {
@@ -90,6 +90,9 @@ func (c *Client) List(ctx context.Context, owner string) ([]model.Listed, error)
 		}
 		for _, r := range raw {
 			item := r.listed()
+			if item.Org || !strings.EqualFold(item.Owner, owner) {
+				continue
+			}
 			if len(item.Meta.Topics) == 0 {
 				if topics, err := c.Topics(ctx, item.Owner, item.Name); err == nil {
 					item.Meta.Topics = topics
@@ -129,12 +132,10 @@ func (c *Client) Create(ctx context.Context, owner, name string, meta model.Meta
 		"private":     meta.Private,
 		"auto_init":   false,
 	}
-	var path string
 	if kind == "Organization" {
-		path = "/api/v1/orgs/" + url.PathEscape(owner) + "/repos"
-	} else {
-		path = "/api/v1/user/repos"
+		return nil, fmt.Errorf("forgejo owner %q is an organization; reposync only creates username/* user repos", owner)
 	}
+	path := "/api/v1/user/repos"
 	var raw repoJSON
 	if err := c.do(ctx, http.MethodPost, path, body, &raw); err != nil {
 		return nil, err
