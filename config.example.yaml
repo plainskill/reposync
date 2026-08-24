@@ -1,0 +1,32 @@
+listen: "127.0.0.1:7745"
+state_root: /var/lib/reposync
+sqlite: /var/lib/reposync/reposync.db
+reconcile_every: 5m
+git_timeout: 60s
+
+bot:
+  name: reposync
+  email: reposync@localhost
+  github: reposync[bot]
+  forgejo: reposync
+
+github:
+  token: ${GITHUB_TOKEN}
+  webhook_secret: ${GITHUB_HOOK_SECRET}
+  # Optional. Default is git@github.com:
+  # git: git@github.com:
+
+forgejo:
+  api: https://gt.plainskill.net
+  # Local SSH when reposync shares a host with Forgejo (hairpin NAT).
+  git: ssh://git@127.0.0.1:2222
+  token: ${FORGEJO_TOKEN}
+  webhook_secret: ${FJ_HOOK_SECRET}
+
+owners:
+  - github: plainskill
+    forgejo: plainskill
+  - github: LibreLoom
+    forgejo: LibreLoom
+
+exclude: []

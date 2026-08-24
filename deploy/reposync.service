@@ -1,0 +1,20 @@
+[Unit]
+Description=reposync Forgejo / GitHub repository sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=reposync
+Group=reposync
+UMask=0077
+WorkingDirectory=/var/lib/reposync
+EnvironmentFile=/etc/reposync.env
+ExecStartPre=/usr/bin/chmod 0600 /etc/reposync.yaml
+ExecStart=/usr/local/bin/reposync -config /etc/reposync.yaml
+Restart=always
+RestartSec=2
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
