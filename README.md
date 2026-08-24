@@ -11,8 +11,9 @@ Only **user** namespaces are synced (`username/repo` on each side). Organization
 | Situation | Action |
 |---|---|
 | Repo exists on one forge only, never paired | Create it on the other side, copy metadata, seed git |
-| Metadata differs | Last-write-wins using each API `updated_at` |
-| Previously paired, then gone on one side | Archive the remaining copy; do not recreate the missing side |
+| Metadata changes | Each field (description, homepage, default branch, private, archived, topics) is compared to the last SQLite snapshot. A change on one side is copied to the other. Different fields can move both ways in one pass. The same field changed on both sides uses `updated_at` last-write-wins |
+| Previously paired and live, then gone on one side | Archive the remaining copy; do not recreate the missing side |
+| Pair row exists but never went live (stale / GitHub empty) | Create the missing side; do not archive |
 | Git ref fast-forward | Push the newer tip |
 | Diverged, clean merge | Merge commit (no rebase), push to both |
 | Content conflict | Leave the original branch. Commit the conflicted tree (merge markers kept) on `reposync/conflict/<branch>` and push that ref to both |

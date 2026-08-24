@@ -30,6 +30,16 @@ type Runner struct {
 }
 
 func (r *Runner) ReconcileAll(ctx context.Context) error {
+	prior, err := r.DB.ListPairs()
+	if err != nil {
+		return err
+	}
+	wasLive := map[int64]bool{}
+	for _, p := range prior {
+		if p.Established && !p.PeerGone {
+			wasLive[p.ID] = true
+		}
+	}
 	ghByKey := map[string]model.Listed{}
 	fjByKey := map[string]model.Listed{}
 	for _, o := range r.Cfg.Owners {
@@ -87,7 +97,7 @@ func (r *Runner) ReconcileAll(ctx context.Context) error {
 			return err
 		}
 	}
-	return r.detectGone(ctx, ghByKey, fjByKey)
+	return r.detectGone(ctx, ghByKey, fjByKey, wasLive)
 }
 
 func (r *Runner) ReconcileOne(ctx context.Context, ghOwner, ghName, fjOwner, fjName string) error {
@@ -130,7 +140,7 @@ func (r *Runner) ReconcileOne(ctx context.Context, ghOwner, ghName, fjOwner, fjN
 		return r.pairSides(ctx, model.Listed{}, fj, true)
 	}
 	p, err := r.lookupPair(0, 0, ghOwner, ghName, fjOwner, fjName)
-	if err != nil || p == nil || p.PeerGone {
+	if err != nil || p == nil || p.PeerGone || !p.Established {
 		return err
 	}
 	return r.DB.MarkPeerGone(p.ID, "both")
@@ -167,7 +177,7 @@ func (r *Runner) pairSides(ctx context.Context, gh model.Listed, fj model.Listed
 			r.Log.Info("skip create; peer_gone", "forgejo", fj.Owner+"/"+fj.Name)
 			return nil
 		}
-		if p != nil {
+		if p != nil && p.Established {
 			return r.archiveRemaining(ctx, p, "github", fj, model.Listed{})
 		}
 		meta := fj.Meta
@@ -178,12 +188,16 @@ func (r *Runner) pairSides(ctx context.Context, gh model.Listed, fj model.Listed
 		if err != nil {
 			return fmt.Errorf("create github %s/%s: %w", ghOwner, fj.Name, err)
 		}
-		_, err = r.DB.UpsertPair(store.Pair{
+		enc, err := model.EncodeMeta(meta)
+		if err != nil {
+			return err
+		}
+		return r.savePair(store.Pair{
 			GitHubID: created.ID, ForgejoID: fj.ID,
 			GitHubOwner: created.Owner, GitHubName: created.Name,
 			ForgejoOwner: fj.Owner, ForgejoName: fj.Name,
+			Established: true, LastMeta: enc,
 		})
-		return err
 	}
 	fjOwner, ok := r.Cfg.ForgejoOwner(gh.Owner)
 	if !ok {
@@ -198,7 +212,7 @@ func (r *Runner) pairSides(ctx context.Context, gh model.Listed, fj model.Listed
 		return nil
 	}
 	if !haveFJ {
-		if p != nil {
+		if p != nil && p.Established {
 			return r.archiveRemaining(ctx, p, "forgejo", model.Listed{}, gh)
 		}
 		meta := gh.Meta
@@ -209,12 +223,16 @@ func (r *Runner) pairSides(ctx context.Context, gh model.Listed, fj model.Listed
 		if err != nil {
 			return fmt.Errorf("create forgejo %s/%s: %w", fjOwner, gh.Name, err)
 		}
-		_, err = r.DB.UpsertPair(store.Pair{
+		enc, err := model.EncodeMeta(meta)
+		if err != nil {
+			return err
+		}
+		return r.savePair(store.Pair{
 			GitHubID: gh.ID, ForgejoID: created.ID,
 			GitHubOwner: gh.Owner, GitHubName: gh.Name,
 			ForgejoOwner: created.Owner, ForgejoName: created.Name,
+			Established: true, LastMeta: enc,
 		})
-		return err
 	}
 	if p != nil {
 		if p.GitHubName != gh.Name {
@@ -230,14 +248,28 @@ func (r *Runner) pairSides(ctx context.Context, gh model.Listed, fj model.Listed
 			gh.Name = fj.Name
 		}
 	}
-	if err := r.syncMeta(ctx, gh, fj); err != nil {
+	lastMeta := ""
+	if p != nil {
+		lastMeta = p.LastMeta
+	}
+	applied, err := r.syncMeta(ctx, gh, fj, lastMeta)
+	if err != nil {
 		return err
 	}
-	_, err = r.DB.UpsertPair(store.Pair{
+	enc, err := model.EncodeMeta(applied)
+	if err != nil {
+		return err
+	}
+	return r.savePair(store.Pair{
 		GitHubID: gh.ID, ForgejoID: fj.ID,
 		GitHubOwner: gh.Owner, GitHubName: gh.Name,
 		ForgejoOwner: fj.Owner, ForgejoName: fj.Name,
+		Established: true, LastMeta: enc,
 	})
+}
+
+func (r *Runner) savePair(p store.Pair) error {
+	_, err := r.DB.UpsertPair(p)
 	return err
 }
 
@@ -259,24 +291,26 @@ func (r *Runner) archiveRemaining(ctx context.Context, p *store.Pair, goneSide s
 	return r.DB.MarkPeerGone(p.ID, "forgejo")
 }
 
-func (r *Runner) syncMeta(ctx context.Context, gh, fj model.Listed) error {
+func (r *Runner) syncMeta(ctx context.Context, gh, fj model.Listed, lastMeta string) (model.Meta, error) {
 	if gh.Empty || fj.Empty {
 		gh.Meta.DefaultBranch = ""
 		fj.Meta.DefaultBranch = ""
 	}
-	if gh.Meta.Equal(fj.Meta) {
-		return nil
+	snap, has := model.DecodeMeta(lastMeta)
+	apply, writeGH, writeFJ := model.ReconcileMeta(snap, has, gh.Meta, fj.Meta)
+	if writeFJ {
+		r.Log.Info("metadata -> forgejo", "repo", gh.Owner+"/"+gh.Name)
+		if err := r.Forgejo.Update(ctx, fj.Owner, fj.Name, apply); err != nil {
+			return model.Meta{}, err
+		}
 	}
-	win, side := model.Winner(gh.Meta, fj.Meta)
-	if side == "github" && !win.Equal(fj.Meta) {
-		r.Log.Info("metadata github -> forgejo", "repo", gh.Owner+"/"+gh.Name)
-		return r.Forgejo.Update(ctx, fj.Owner, fj.Name, win)
+	if writeGH {
+		r.Log.Info("metadata -> github", "repo", gh.Owner+"/"+gh.Name)
+		if err := r.GitHub.Update(ctx, gh.Owner, gh.Name, apply); err != nil {
+			return model.Meta{}, err
+		}
 	}
-	if side == "forgejo" && !win.Equal(gh.Meta) {
-		r.Log.Info("metadata forgejo -> github", "repo", gh.Owner+"/"+gh.Name)
-		return r.GitHub.Update(ctx, gh.Owner, gh.Name, win)
-	}
-	return nil
+	return apply, nil
 }
 
 func (r *Runner) lookupPair(ghID, fjID int64, ghOwner, ghName, fjOwner, fjName string) (*store.Pair, error) {
@@ -296,13 +330,13 @@ func (r *Runner) lookupPair(ghID, fjID int64, ghOwner, ghName, fjOwner, fjName s
 	return r.DB.PairByForgejo(fjOwner, fjName)
 }
 
-func (r *Runner) detectGone(ctx context.Context, gh map[string]model.Listed, fj map[string]model.Listed) error {
+func (r *Runner) detectGone(ctx context.Context, gh map[string]model.Listed, fj map[string]model.Listed, wasLive map[int64]bool) error {
 	pairs, err := r.DB.ListPairs()
 	if err != nil {
 		return err
 	}
 	for _, p := range pairs {
-		if p.PeerGone {
+		if p.PeerGone || !wasLive[p.ID] {
 			continue
 		}
 		_, haveGH := gh[key(p.GitHubOwner, p.GitHubName)]

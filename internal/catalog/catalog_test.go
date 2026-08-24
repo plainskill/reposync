@@ -118,6 +118,43 @@ func TestLastWriteWins(t *testing.T) {
 	}
 }
 
+func TestCreateMissingGitHub(t *testing.T) {
+	gh, fj := newFake(), newFake()
+	fj.repos["alice/demo"] = model.Listed{ID: 2, Owner: "alice", Name: "demo", Meta: model.Meta{Description: "from fj", UpdatedAt: time.Now()}}
+	r := testRunner(t, gh, fj)
+	if err := r.ReconcileAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(gh.created) != 1 || gh.created[0] != "alice/demo" {
+		t.Fatalf("created: %v", gh.created)
+	}
+	if fj.repos["alice/demo"].Meta.Archived {
+		t.Fatal("should not archive forgejo when github was empty")
+	}
+}
+
+func TestStalePairCreatesInsteadOfArchive(t *testing.T) {
+	gh, fj := newFake(), newFake()
+	fj.repos["alice/demo"] = model.Listed{ID: 2, Owner: "alice", Name: "demo", Meta: model.Meta{Description: "keep", UpdatedAt: time.Now()}}
+	r := testRunner(t, gh, fj)
+	if _, err := r.DB.UpsertPair(store.Pair{
+		GitHubID: 1, ForgejoID: 2,
+		GitHubOwner: "alice", GitHubName: "demo",
+		ForgejoOwner: "alice", ForgejoName: "demo",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ReconcileAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fj.repos["alice/demo"].Meta.Archived {
+		t.Fatal("stale unestablished pair must not archive")
+	}
+	if len(gh.created) != 1 {
+		t.Fatalf("expected github create, got %v", gh.created)
+	}
+}
+
 func TestPeerGoneArchivesNotRecreate(t *testing.T) {
 	gh, fj := newFake(), newFake()
 	gh.repos["alice/demo"] = model.Listed{ID: 1, Owner: "alice", Name: "demo", Meta: model.Meta{Description: "x", UpdatedAt: time.Now()}}
@@ -140,6 +177,37 @@ func TestPeerGoneArchivesNotRecreate(t *testing.T) {
 	}
 	if len(fj.created) != 0 {
 		t.Fatalf("should not recreate: %v", fj.created)
+	}
+}
+
+func TestArchiveWhenPeerArchived(t *testing.T) {
+	gh, fj := newFake(), newFake()
+	now := time.Now()
+	gh.repos["alice/demo"] = model.Listed{ID: 1, Owner: "alice", Name: "demo", Meta: model.Meta{Description: "x", UpdatedAt: now}}
+	fj.repos["alice/demo"] = model.Listed{ID: 2, Owner: "alice", Name: "demo", Meta: model.Meta{Description: "x", UpdatedAt: now}}
+	r := testRunner(t, gh, fj)
+	if err := r.ReconcileAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	g := gh.repos["alice/demo"]
+	g.Meta.Archived = true
+	g.Meta.UpdatedAt = now.Add(time.Minute)
+	gh.repos["alice/demo"] = g
+	if err := r.ReconcileAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !fj.repos["alice/demo"].Meta.Archived {
+		t.Fatal("expected forgejo archived after github archive")
+	}
+	g = gh.repos["alice/demo"]
+	g.Meta.Archived = false
+	g.Meta.UpdatedAt = now.Add(2 * time.Minute)
+	gh.repos["alice/demo"] = g
+	if err := r.ReconcileAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fj.repos["alice/demo"].Meta.Archived {
+		t.Fatal("unarchive on github should unarchive forgejo")
 	}
 }
 
