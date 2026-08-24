@@ -141,6 +141,9 @@ func (c *Client) Create(ctx context.Context, owner, name string, meta model.Meta
 		return nil, err
 	}
 	item := raw.listed()
+	// Same empty-repo guard as GitHub: drop default_branch from the immediate
+	// Update; the git sync sets it after content lands.
+	meta.DefaultBranch = ""
 	if err := c.Update(ctx, item.Owner, item.Name, meta); err != nil {
 		return &item, err
 	}
@@ -184,8 +187,12 @@ func (c *Client) Topics(ctx context.Context, owner, name string) ([]string, erro
 }
 
 func (c *Client) SetTopics(ctx context.Context, owner, name string, topics []string) error {
+	names := model.NormalizeTopics(topics)
+	if names == nil {
+		names = []string{}
+	}
 	return c.do(ctx, http.MethodPut, "/api/v1/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name)+"/topics",
-		map[string]any{"topics": model.NormalizeTopics(topics)}, nil)
+		map[string]any{"topics": names}, nil)
 }
 
 func (c *Client) ownerType(ctx context.Context, owner string) (string, error) {

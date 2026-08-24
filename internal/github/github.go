@@ -77,7 +77,10 @@ func (c *Client) List(ctx context.Context, owner string) ([]model.Listed, error)
 		return nil, fmt.Errorf("github owner %q is an organization; reposync only syncs username/* user repos", owner)
 	}
 	q := url.Values{"per_page": {"100"}, "type": {"owner"}}
-	path := "/users/" + url.PathEscape(owner) + "/repos"
+	// Use the authenticated /user/repos endpoint so private repos owned by the
+	// token's user are visible. The public /users/{owner}/repos endpoint hides
+	// private repos even when the token owns them.
+	path := "/user/repos"
 	var all []model.Listed
 	page := 1
 	for {
@@ -146,6 +149,10 @@ func (c *Client) Create(ctx context.Context, owner string, name string, meta mod
 		return nil, err
 	}
 	item := raw.listed()
+	// The repo is empty right after create (auto_init=false). GitHub rejects
+	// setting default_branch on an empty repo, so drop it from the immediate
+	// Update. The git sync pushes content next; a later reconcile sets it.
+	meta.DefaultBranch = ""
 	if err := c.Update(ctx, item.Owner, item.Name, meta); err != nil {
 		return &item, err
 	}
@@ -190,8 +197,13 @@ func (c *Client) Topics(ctx context.Context, owner, name string) ([]string, erro
 }
 
 func (c *Client) SetTopics(ctx context.Context, owner, name string, topics []string) error {
+	// GitHub requires an array (not null) for the names field.
+	names := model.NormalizeTopics(topics)
+	if names == nil {
+		names = []string{}
+	}
 	return c.do(ctx, http.MethodPut, "/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name)+"/topics",
-		map[string]any{"names": model.NormalizeTopics(topics)}, nil)
+		map[string]any{"names": names}, nil)
 }
 
 func (c *Client) ownerType(ctx context.Context, owner string) (string, error) {
